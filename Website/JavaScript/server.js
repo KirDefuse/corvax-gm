@@ -102,18 +102,19 @@ app.get("/auth/callback", async (req, res) => {
         if (!meRes.ok) throw new Error(`users/@me: ${meRes.status}`);
         const d = await meRes.json();
 
-        // Пускаем тех, кто есть хотя бы в одной из таблиц: ГМ или модерация
-        // (их наполняет синхронизатор из Google)
+        // Пускаем тех, кто есть хотя бы в одной из таблиц: ГМ (по числовому Discord ID)
+        // или модерация (по логину Discord, регистр не важен). Таблицы наполняет синхронизатор из Google
         const user = await get(
             `SELECT discord_id FROM users_gm WHERE discord_id = ?
              UNION
-             SELECT discord_id FROM user_roles_moderation WHERE discord_id = ?`,
-            [d.id, d.id]
+             SELECT discord_id FROM user_roles_moderation WHERE discord_id = ? COLLATE NOCASE`,
+            [d.id, String(d.username || "").toLowerCase()]
         );
         if (!user) return res.redirect("/login.html?error=not_registered");
 
         req.session = {
             discordId: d.id,
+            username: String(d.username || "").toLowerCase(),   // уникальный логин, ключ сотрудника модерации
             name: d.global_name || d.username,
             avatar: d.avatar
                 ? `https://cdn.discordapp.com/avatars/${d.id}/${d.avatar}.png?size=128`
@@ -135,13 +136,30 @@ app.get("/auth/logout", (req, res) => {
 const PUBLIC = new Set(["/login.html", "/style.css"]);
 
 app.use((req, res, next) => {
-    const loggedIn = Boolean(req.session && req.session.discordId);
+    const loggedIn = Boolean(req.session && req.session.discordId && req.session.username);   // старые сессии без username входят заново
 
     if (req.path === "/login.html" && loggedIn) return res.redirect("/");
     if (PUBLIC.has(req.path) || loggedIn) return next();
 
     if (req.path.startsWith("/api/")) return res.status(401).json({ error: "unauthorized" });
     res.redirect("/login.html");
+});
+
+// Ключ сотрудника модерации - логин Discord так, как он записан в users_moderation.
+// Ищем без учёта регистра, а дальше везде используем написание из базы: сравнения не зависят от регистра.
+app.use(async (req, res, next) => {
+    req.modId = null;
+    try {
+        const username = req.session && req.session.username;
+        const isAsset = req.path.includes(".") && !req.path.endsWith(".html");
+        if (username && !isAsset) {
+            const row = await get("SELECT discord_id AS id FROM users_moderation WHERE discord_id = ? COLLATE NOCASE", [username]);
+            req.modId = row ? row.id : null;
+        }
+        next();
+    } catch (err) {
+        next(err);
+    }
 });
 
 // ---------- API ----------
@@ -180,6 +198,11 @@ const GM = {
     users: "users_gm",
     roles: "roles_gm",
     userRoles: "user_roles_gm",
+    idLabel: "Discord ID",
+    idError: "Discord ID должен состоять только из цифр.",
+    normId: v => String(v || "").trim(),
+    validId: v => /^\d{5,25}$/.test(v),
+    collate: "",
     labels: {
         GM: "Гейм-Мастер",
         SENIOR_GM: "Ведущий Мастер",
@@ -196,6 +219,12 @@ const MOD = {
     users: "users_moderation",
     roles: "roles_moderation",
     userRoles: "user_roles_moderation",
+    useUsername: true,   // ключ сотрудника - логин Discord (req.modId), а не числовой ID
+    idLabel: "имени пользователя Discord",
+    idError: "Имя пользователя Discord: 2-32 символа, латинские буквы, цифры, «_» и «.».",
+    normId: v => String(v || "").trim().replace(/^@/, "").toLowerCase(),
+    validId: v => /^[a-z0-9_.]{2,32}$/.test(v),
+    collate: " COLLATE NOCASE",   // логины сравниваем без учёта регистра
     needsRole: true,   // в модерации сотрудник - тот, у кого есть хотя бы одна роль, а не просто строка в users
     labels: {
         MODERATOR: "Модератор",
@@ -215,7 +244,7 @@ const rolesOfDept = (dept, discordId) => all(
     `SELECT r.name, r.level
      FROM ${dept.userRoles} ur
      JOIN ${dept.roles} r ON r.id = ur.role_id
-     WHERE ur.discord_id = ?
+     WHERE ur.discord_id = ?${dept.collate}
      ORDER BY r.level DESC`,
     [discordId]
 );
@@ -234,6 +263,9 @@ const canGrantRole = (p, role) => p.isAdmin || role.level < p.maxLevel;
 // Нельзя менять роли тем, кто равен вам или выше (администратор - любым)
 const canTouchUser = (p, targetRoles) =>
     p.isAdmin || Math.max(0, ...targetRoles.map(r => r.level)) < p.maxLevel;
+
+// Кто делает запрос в рамках отдела: у ГМ это числовой Discord ID, у модерации логин из базы
+const idOf = (dept, req) => (dept.useUsername ? req.modId : req.session.discordId);
 
 // Короткие обёртки для ГМ-отдела: ими пользуются своды, ивенты и оценки (они только для ГМ)
 const decorate = decorateFor(GM);
@@ -256,8 +288,8 @@ async function requireGm(req, res, next) {
 app.get("/api/me", safe(async (req, res) => {
     const id = req.session.discordId;
     const gmUser = await get("SELECT ckey FROM users_gm WHERE discord_id = ?", [id]);
-    const modRow = await get("SELECT ckey FROM users_moderation WHERE discord_id = ?", [id]);
-    const modRoles = modRow ? await rolesOfDept(MOD, id) : [];
+    const modRow = req.modId ? await get("SELECT ckey FROM users_moderation WHERE discord_id = ?", [req.modId]) : null;
+    const modRoles = modRow ? await rolesOfDept(MOD, req.modId) : [];
     const modUser = modRoles.length ? modRow : null;   // модератор - тот, у кого есть хотя бы одна роль
 
     if (!gmUser && !modUser) {         // человека убрали из обеих таблиц - выкидываем
@@ -280,6 +312,7 @@ app.get("/api/me", safe(async (req, res) => {
         canViewTable: gmPerms.maxLevel >= TABLE_MIN_LEVEL,
         mod: modUser
             ? {
+                username: req.modId,
                 ckey: modUser.ckey,
                 roles: modRoles.map(decorateFor(MOD)),
                 canManageRoles: modPerms.canManage,
@@ -312,7 +345,7 @@ function mountRoleManagement(dept, { page, api }) {
 
     async function requireManager(req, res, next) {
         try {
-            const perms = permsFor(dept, await rolesOfDept(dept, req.session.discordId));
+            const perms = permsFor(dept, await rolesOfDept(dept, idOf(dept, req)));
             if (!perms.canManage) {
                 return req.originalUrl.startsWith("/api/")
                     ? fail(res, 403, "Недостаточно прав.")
@@ -334,7 +367,7 @@ function mountRoleManagement(dept, { page, api }) {
         const rows = await all(
             `SELECT u.discord_id AS discordId, u.ckey, r.name, r.level
              FROM ${dept.userRoles} ur
-             JOIN ${dept.users} u ON u.discord_id = ur.discord_id
+             JOIN ${dept.users} u ON u.discord_id = ur.discord_id${dept.collate}
              JOIN ${dept.roles} r ON r.id = ur.role_id
              ORDER BY u.ckey COLLATE NOCASE, r.level DESC`
         );
@@ -364,10 +397,10 @@ function mountRoleManagement(dept, { page, api }) {
     // Общая проверка для выдачи и снятия. Если что-то не так, сама отвечает ошибкой и вернёт null
     async function prepareRoleChange(req, res) {
         const body = req.body || {};
-        const id = String(body.discordId || "").trim();
+        const idInput = dept.normId(body.discordId);
 
-        if (!/^\d{5,25}$/.test(id)) {
-            fail(res, 400, "Discord ID должен состоять только из цифр.");
+        if (!dept.validId(idInput)) {
+            fail(res, 400, dept.idError);
             return null;
         }
         const role = await get(`SELECT id, name, level FROM ${dept.roles} WHERE name = ?`, [String(body.role || "")]);
@@ -379,11 +412,16 @@ function mountRoleManagement(dept, { page, api }) {
             fail(res, 403, "Вы не можете управлять этой ролью.");
             return null;
         }
-        const target = await get(`SELECT ckey FROM ${dept.users} WHERE discord_id = ?`, [id]);
+        // Берём написание из базы, чтобы дальше всё сравнивалось точно
+        const target = await get(
+            `SELECT discord_id AS id, ckey FROM ${dept.users} WHERE discord_id = ?${dept.collate}`,
+            [idInput]
+        );
         if (!target) {
-            fail(res, 404, "Этого Discord ID нет в списке пользователей. Он появится после синхронизации с таблицей Google.");
+            fail(res, 404, `Этого ${dept.idLabel} нет в списке пользователей. Он появится после синхронизации с таблицей Google.`);
             return null;
         }
+        const id = target.id;
         if (!canTouchUser(req.perms, await rolesOfDept(dept, id))) {
             fail(res, 403, "Вы не можете менять роли этого пользователя.");
             return null;
@@ -397,7 +435,7 @@ function mountRoleManagement(dept, { page, api }) {
 
         const r = await run(
             `INSERT OR IGNORE INTO ${dept.userRoles} (discord_id, role_id, granted_by) VALUES (?, ?, ?)`,
-            [c.id, c.role.id, req.session.discordId]
+            [c.id, c.role.id, idOf(dept, req)]
         );
         res.json({ ok: true, already: r.changes === 0, ckey: c.target.ckey, label: dec(c.role).label });
     }));
@@ -415,7 +453,7 @@ function mountRoleManagement(dept, { page, api }) {
         }
 
         const r = await run(
-            `DELETE FROM ${dept.userRoles} WHERE discord_id = ? AND role_id = ?`,
+            `DELETE FROM ${dept.userRoles} WHERE discord_id = ?${dept.collate} AND role_id = ?`,
             [c.id, c.role.id]
         );
         if (r.changes === 0) return fail(res, 400, "У пользователя нет этой роли.");
@@ -898,7 +936,7 @@ db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_mod_unique ON ${REVIEWS_MO
 
 async function requireModTableAccess(req, res, next) {
     try {
-        const perms = permsFor(MOD, await rolesOfDept(MOD, req.session.discordId));
+        const perms = permsFor(MOD, await rolesOfDept(MOD, req.modId));
         if (perms.maxLevel < MOD_TABLE_MIN_LEVEL) {
             return req.originalUrl.startsWith("/api/")
                 ? fail(res, 403, "Недостаточно прав.")
@@ -920,7 +958,7 @@ app.get("/api/mod/ratings", safe(async (req, res) => {
     const period = await get("SELECT is_closed AS closed FROM periods WHERE id = ?", [periodId]);
     if (!period) return fail(res, 404, "Свод не найден.");
 
-    const me = req.session.discordId;
+    const me = req.modId;
     const p = permsFor(MOD, await rolesOfDept(MOD, me));
     const serverSel = modHasServer ? `u.${MOD_SERVER_COLUMN} AS server` : "NULL AS server";
 
@@ -967,11 +1005,11 @@ app.get("/api/mod/ratings", safe(async (req, res) => {
 app.post("/api/mod/reviews", safe(async (req, res) => {
     const body = req.body || {};
     const periodId = Number(body.periodId);
-    const moderatorId = String(body.moderatorId || "").trim();
+    const moderatorInput = MOD.normId(body.moderatorId);
     const raw = Array.isArray(body.scores) ? body.scores : [];
 
     if (!Number.isInteger(periodId)) throw new HttpError(400, "Не указан свод.");
-    if (!/^\d{5,25}$/.test(moderatorId)) throw new HttpError(400, "Не указан модератор.");
+    if (!MOD.validId(moderatorInput)) throw new HttpError(400, "Не указан модератор.");
     if (raw.length !== MOD_MAX_SCORES.length ||
         raw.some((n, i) => typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > MOD_MAX_SCORES[i])) {
         const rules = MOD_SCORE_LABELS.map((l, i) => `${l} от 0 до ${MOD_MAX_SCORES[i]}`).join(", ");
@@ -987,14 +1025,16 @@ app.post("/api/mod/reviews", safe(async (req, res) => {
 
     const scores = raw.map(round1);
     const total = round1(scores.reduce((a, b) => a + b, 0));
-    const me = req.session.discordId;
+    const me = req.modId;
 
     await inTransaction(async () => {
         const p = permsFor(MOD, await rolesOfDept(MOD, me));
         if (p.maxLevel < MOD_REVIEW_MIN_LEVEL) throw new HttpError(403, "Оценки могут ставить только рецензенты.");
-        if (moderatorId === me) throw new HttpError(403, "Нельзя оценивать самого себя.");
-        const target = await get("SELECT 1 AS ok FROM users_moderation WHERE discord_id = ?", [moderatorId]);
+        // Логин берём в том написании, как он записан в users_moderation
+        const target = await get("SELECT discord_id AS id FROM users_moderation WHERE discord_id = ? COLLATE NOCASE", [moderatorInput]);
         if (!target) throw new HttpError(404, "Модератор не найден.");
+        const moderatorId = target.id;
+        if (moderatorId === me) throw new HttpError(403, "Нельзя оценивать самого себя.");
 
         const period = await get("SELECT is_closed AS closed FROM periods WHERE id = ?", [periodId]);
         if (!period) throw new HttpError(404, "Свод не найден.");
@@ -1051,7 +1091,7 @@ app.post("/api/mod/reviews", safe(async (req, res) => {
 // Открыт всем, у кого есть роль модерации (как свод у ГМ - всем ГМ); в списке все из users_moderation
 async function requireModMember(req, res, next) {
     try {
-        if (!(await isMember(MOD, req.session.discordId))) {
+        if (!(await isMember(MOD, req.modId))) {
             return fail(res, 403, "Раздел доступен только сотрудникам модерации.");
         }
         next();
@@ -1071,7 +1111,7 @@ app.get("/api/mod/summary", requireModMember, safe(async (req, res) => {
         ? "rv.period_id IN (SELECT id FROM periods WHERE strftime('%Y-%m', start_date) = ?)"
         : "rv.period_id = ?";
     const param = byMonth ? month : periodId;
-    const me = req.session.discordId;
+    const me = req.modId;
 
     const periodsTotal = byMonth
         ? (await get("SELECT COUNT(*) AS n FROM periods WHERE strftime('%Y-%m', start_date) = ?", [month])).n
@@ -1139,7 +1179,7 @@ app.get("/api/mod/summary", requireModMember, safe(async (req, res) => {
 
 // ---------- Профиль модератора ----------
 app.get("/api/mod/profile", safe(async (req, res) => {
-    const me = req.session.discordId;
+    const me = req.modId;
     const roles = await rolesOfDept(MOD, me);
     if (!roles.length) return fail(res, 403, "Раздел доступен только сотрудникам модерации.");
     const p = permsFor(MOD, roles);
@@ -1151,11 +1191,10 @@ app.get("/api/mod/profile", safe(async (req, res) => {
         `SELECT pr.name AS period, pr.is_closed AS closed,
                 rv.score_1, rv.score_2, rv.score_3, rv.score_4, rv.total_score,
                 rv.main_area AS area, rv.comment,
-                COALESCE(ru.ckey, rg.ckey) AS reviewer
+                ru.ckey AS reviewer
          FROM ${REVIEWS_MOD} rv
          JOIN periods pr ON pr.id = rv.period_id
          LEFT JOIN users_moderation ru ON ru.discord_id = rv.reviewer_discord_id
-         LEFT JOIN users_gm rg ON rg.discord_id = rv.reviewer_discord_id
          WHERE rv.moderator_discord_id = ?
          ORDER BY pr.start_date DESC, pr.id DESC`,
         [me]
@@ -1214,15 +1253,15 @@ app.get("/api/mod/profile", safe(async (req, res) => {
 const isMember = async (dept, discordId) =>
     Boolean(await get(
         dept.needsRole
-            ? `SELECT 1 AS ok FROM ${dept.userRoles} WHERE discord_id = ? LIMIT 1`
-            : `SELECT 1 AS ok FROM ${dept.users} WHERE discord_id = ?`,
+            ? `SELECT 1 AS ok FROM ${dept.userRoles} WHERE discord_id = ?${dept.collate} LIMIT 1`
+            : `SELECT 1 AS ok FROM ${dept.users} WHERE discord_id = ?${dept.collate}`,
         [discordId]
     ));
 
 // Страницы отдела открываются только его сотрудникам, остальных отправляем на «/»
 const requireDeptPage = dept => async (req, res, next) => {
     try {
-        if (await isMember(dept, req.session.discordId)) return next();
+        if (await isMember(dept, idOf(dept, req))) return next();
         res.redirect("/");
     } catch (err) {
         next(err);
@@ -1230,9 +1269,8 @@ const requireDeptPage = dept => async (req, res, next) => {
 };
 
 app.get("/", safe(async (req, res) => {
-    const id = req.session.discordId;
-    if (await isMember(GM, id)) return res.redirect("/main.html");
-    if (await isMember(MOD, id)) return res.redirect("/main_mod.html");
+    if (await isMember(GM, req.session.discordId)) return res.redirect("/main.html");
+    if (await isMember(MOD, req.modId)) return res.redirect("/main_mod.html");
     req.session = null;                     // человека убрали из обеих таблиц
     res.redirect("/login.html?error=not_registered");
 }));

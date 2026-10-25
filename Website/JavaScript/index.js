@@ -173,7 +173,7 @@ async function syncUsers() {
 
 // ---------- Синхронизация модеров ----------
 async function syncUsersMod() {
-    const rows = await readSheet(process.env.MOD_SHEET, "Модераторы!A:D");
+    const rows = await readSheet(process.env.MOD_SHEET, "Модераторы!A:E");
     let count = 0;
 
     const activeDiscordIds = new Set();
@@ -181,11 +181,11 @@ async function syncUsersMod() {
     await run("BEGIN");
     try {
         for (const row of rows.slice(1)) {
-            if (!row[0] || !row[3]) continue;
+            if (!row[0] || !row[4]) continue;
 
             const ckey = String(row[0]).trim();
-            const server = String(row[3] || "").trim();
-            const discordId = String(row[1]).trim();
+            const server = String(row[2] || "").trim();
+            const discordId = String(row[4]).trim();
 
             activeDiscordIds.add(discordId);
 

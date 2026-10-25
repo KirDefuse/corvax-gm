@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rate System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="menu-page">
+    <main class="hub">
+        <h1>Оценка ивентов</h1>
+        <p>Свод проведённых ивентов, оценки проверяющих и ваша личная статистика.</p>
+
+        <nav class="menu">
+            <a class="btn" href="main_mod.html" id="switch-link" hidden>Сменить отдел</a>
+            <a class="btn" href="profile.html">Профиль</a>
+            <a class="btn" href="roles.html" id="roles-link" hidden>Роли</a>
+            <a class="btn" href="table.html" id="table-link" hidden>Общая таблица</a>
+            <a class="btn" href="summary.html">Месячный свод</a>
+            <a class="btn" href="my-events.html">Мои ивенты</a>
+        </nav>
+    </main>
+<script>
+fetch("/api/me")
+    .then(r => (r.ok ? r.json() : null))
+    .then(me => {
+        if (!me) return;
+        document.getElementById("roles-link").hidden = !me.canManageRoles;
+        document.getElementById("table-link").hidden = !me.canViewTable;
+        document.getElementById("switch-link").hidden = !me.mod;   // кнопка только тем, кто есть и в модерации
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

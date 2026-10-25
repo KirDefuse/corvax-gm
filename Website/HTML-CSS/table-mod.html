@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Таблица оценки модерации</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="mod-style.css">
+<style>
+    /* Заголовки колонок, по которым можно фильтровать */
+    .th-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+    th[data-f] { cursor: pointer; }
+    /* Строка списка фильтра - единая цель клика: текст, число и галочка клик не перехватывают */
+    #fmenu li > * { pointer-events: none; }
+    #fmenu li { user-select: none; }
+    .th-btn:hover, .th-btn[aria-expanded="true"] { color: var(--text); }
+    .th-btn.on { color: var(--accent); }
+    .th-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
+    .th-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+</style>
+</head>
+<body>
+    <script src="mod-header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Таблица оценки модерации</h1>
+
+        <section class="block">
+            <div class="toolbar">
+                <div class="picker">
+                    <button class="btn picker-btn" id="period-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Выбрать свод">
+                        <span id="period-label"></span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <ul class="picker-list" id="period-list" role="listbox" aria-label="Своды" hidden></ul>
+                </div>
+                <div id="filters" style="display:contents"></div>
+            </div>
+
+            <div class="scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Сикей</th><th data-f="server">Сервер</th><th data-f="reviewer">Рецензент</th>
+                            <th class="c" data-f="rated">Оценка</th><th data-f="area">Основная деятельность</th><th class="cm">Комментарий</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div class="report" id="report" hidden></div>
+    <ul class="picker-list" id="fmenu" hidden style="position:fixed;top:0;left:0;min-width:180px;width:max-content"></ul>
+
+    <dialog class="modal" id="rate" aria-labelledby="rate-title">
+        <h2 id="rate-title">Оценка модератора</h2>
+        <p id="rate-sub"></p>
+        <table class="mini">
+            <tbody id="rate-body"></tbody>
+        </table>
+        <label class="cm-label" for="rate-area">Основная деятельность</label>
+        <select class="field-input" id="rate-area"></select>
+        <label class="cm-label" for="rate-comment">Комментарий</label>
+        <textarea class="field-input" id="rate-comment" rows="3" maxlength="500" placeholder="Необязательно"></textarea>
+        <p class="msg err" id="rate-err" role="alert"></p>
+        <div class="actions">
+            <button class="btn" id="rate-cancel" type="button">Отмена</button>
+            <button class="btn primary" id="rate-save" type="button" disabled>Сохранить</button>
+        </div>
+    </dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Критерии, максимумы и список деятельности приходят с сервера, здесь только значения по умолчанию
+let LABELS = ["Активность", "Общение", "Разбор", "Личная оценка"];
+let MAX_SCORES = [5, 10, 5, 5];
+let MAX_TOTAL = 25;
+let AREAS = [];
+let items = [];
+let periods = [];
+let periodId = null;
+
+const total = a => Math.round(a.reduce((x, y) => x + y, 0) * 10) / 10;   // общая = сумма всех критериев
+const tone = t => t >= MAX_TOTAL * 0.8 ? "good" : t >= MAX_TOTAL * 0.5 ? "mid" : "bad";   // от 80% и от 50% максимума
+
+const COMMENT_PREVIEW = 8;           // сколько символов комментария видно в таблице
+const preview = t => {
+    const one = t.replace(/\s+/g, " ");
+    return one.length > COMMENT_PREVIEW ? one.slice(0, COMMENT_PREVIEW).trimEnd() + "…" : one;
+};
+
+const rows = $("rows");
+const emptyRow = text => `<tr><td colspan="6" class="none">${esc(text)}</td></tr>`;
+
+async function api(url, body) {
+    const res = await fetch(url, body ? {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    } : undefined);
+    if (res.status === 401) { location.href = "/login.html"; throw new Error("Нужно войти заново."); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Ошибка сервера.");
+    return data;
+}
+
+function render() {
+    if (!items.length) { rows.innerHTML = emptyRow("В модерации пока никого нет"); updateCount(); return; }
+    const list = visible();
+    updateCount();
+    if (!list.length) { rows.innerHTML = emptyRow("Нет модераторов под выбранные фильтры"); return; }
+    rows.innerHTML = list.map(e => {
+        const t = e.s ? e.total : null;
+        const cls = t === null ? "wait" : tone(t);
+        const text = t === null ? "—" : t;
+        const score = e.canReview
+            ? `<button class="score ${cls}" type="button" data-rate="${esc(e.id)}" title="Поставить оценку">${text}</button>`
+            : `<span class="score ${cls}">${text}</span>`;
+        // Тем, кто может оценивать, комментарий открывается на редактирование по клику
+        const edit = e.canReview ? ` data-rate="${esc(e.id)}" data-focus="comment"` : "";
+        const cm = e.comment
+            ? `<button class="cmt" type="button" data-id="${esc(e.id)}"${edit}${e.canReview ? ' title="Редактировать"' : ""}>${esc(preview(e.comment))}</button>`
+            : e.canReview
+                ? `<button class="cmt add" type="button"${edit}>+ Добавить</button>`
+                : '<span class="none">—</span>';
+        return `<tr>
+            <td>${esc(e.ckey)}</td>
+            <td class="${e.server ? "" : "none"}">${esc(e.server || "—")}</td>
+            <td class="${e.reviewer ? "" : "none"}">${esc(e.reviewer || "—")}</td>
+            <td class="c">${score}</td>
+            <td>${e.area ? `<span class="chip">${esc(e.area)}</span>` : '<span class="none">—</span>'}</td>
+            <td class="cm">${cm}</td>
+        </tr>`;
+    }).join("");
+}
+
+async function load() {
+    rows.innerHTML = emptyRow("Загрузка…");
+    try {
+        const data = await api(`/api/mod/ratings?period=${periodId}`);
+        LABELS = data.labels;
+        MAX_SCORES = data.maxScores;
+        MAX_TOTAL = data.maxTotal;
+        AREAS = data.areas;
+        items = data.rows;
+        buildForm();
+        buildFilters();
+        render();
+    } catch (e) {
+        items = [];
+        buildFilters();
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+
+
+/* ---------- Фильтры: клик по названию колонки ---------- */
+// Пустой набор значений = фильтр выключен. Фильтры работают по уже загруженным строкам.
+const FILTERS = [
+    { key: "server",   get: e => e.server || "Не указан" },
+    { key: "reviewer", get: e => e.reviewer || "Без рецензента" },
+    { key: "rated",    get: e => e.s ? "Оценён" : "Не оценён" },
+    { key: "area",     get: e => e.area || "Не указана" }
+];
+const picked = Object.fromEntries(FILTERS.map(f => [f.key, new Set()]));
+const filtersEl = $("filters");        // сюда ставятся «Сбросить» и счётчик
+const menu = $("fmenu");               // одно общее выпадающее меню, показывается под нужным заголовком
+let menuKey = null;
+
+const visible = () => items.filter(e => FILTERS.every(f => !picked[f.key].size || picked[f.key].has(f.get(e))));
+const resetFilters = () => FILTERS.forEach(f => picked[f.key].clear());
+const anyFilter = () => FILTERS.some(f => picked[f.key].size);
+
+const CHEV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+
+// Названия колонок превращаем в кнопки
+function initHeaders() {
+    document.querySelectorAll("th[data-f]").forEach(th => {
+        th.dataset.label = th.textContent.trim();
+        th.innerHTML = `<button class="th-btn" type="button" aria-haspopup="true" aria-expanded="false"><span class="th-label"></span>${CHEV}</button>`;
+    });
+    syncHeaders();
+}
+
+function syncHeaders() {
+    document.querySelectorAll("th[data-f]").forEach(th => {
+        const key = th.dataset.f;
+        const n = picked[key].size;
+        const btn = th.firstElementChild;
+        btn.classList.toggle("on", n > 0);
+        btn.querySelector(".th-label").textContent = th.dataset.label + (n ? ` (${n})` : "");
+        btn.setAttribute("aria-expanded", String(menuKey === key));
+    });
+}
+
+function updateCount() {
+    const el = $("f-count");
+    if (!el) return;
+    el.textContent = items.length ? `Показано ${visible().length} из ${items.length}` : "";
+    $("f-reset").disabled = !anyFilter();
+}
+
+function closeFilterMenus() {
+    menu.hidden = true;
+    menuKey = null;
+    syncHeaders();
+}
+
+function openMenu(key, btn) {
+    const f = FILTERS.find(x => x.key === key);
+    const counts = new Map();
+    for (const e of items) counts.set(f.get(e), (counts.get(f.get(e)) || 0) + 1);
+    const opts = [...counts.entries()].sort((x, y) => String(x[0]).localeCompare(String(y[0]), "ru"));
+
+    menu.innerHTML = opts.map(([v, n]) => `
+        <li role="menuitemcheckbox" tabindex="0" aria-checked="${picked[key].has(v)}" data-v="${esc(v)}" style="gap:10px">
+            <input type="checkbox" tabindex="-1" aria-hidden="true" style="pointer-events:none;accent-color:var(--accent)" ${picked[key].has(v) ? "checked" : ""}>
+            <span style="flex:1">${esc(v)}</span><small>${n}</small>
+        </li>`).join("");
+    menuKey = key;
+    menu.hidden = false;
+    syncHeaders();
+
+    // Ставим меню под заголовком и следим, чтобы оно не вылезло за экран
+    const r = btn.getBoundingClientRect(), w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
+    let top = r.bottom + 6;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    menu.style.top = top + "px";
+}
+
+// Вызывается после загрузки: убирает выбор, которого в данных уже нет
+function buildFilters() {
+    closeFilterMenus();
+    for (const f of FILTERS) {
+        const have = new Set(items.map(f.get));
+        for (const v of [...picked[f.key]]) if (!have.has(v)) picked[f.key].delete(v);
+    }
+    filtersEl.innerHTML = items.length
+        ? '<button class="btn toggle" id="f-reset" type="button">Сбросить фильтры</button><span class="none" id="f-count" style="align-self:center;margin-left:auto"></span>'
+        : "";
+    syncHeaders();
+    updateCount();
+}
+
+// Кликабельна вся ячейка заголовка, а не только текст
+document.querySelector("thead").addEventListener("click", ev => {
+    const th = ev.target.closest("th[data-f]");
+    if (!th || !items.length) return;
+    const key = th.dataset.f;
+    if (menuKey === key) { closeFilterMenus(); return; }
+    togglePicker(false);                       // закрываем выбор свода
+    openMenu(key, th.firstElementChild);
+});
+
+function toggleOption(li) {
+    const set = picked[menuKey];
+    const on = !set.has(li.dataset.v);
+    if (on) set.add(li.dataset.v); else set.delete(li.dataset.v);
+    li.setAttribute("aria-checked", String(on));
+    li.querySelector("input").checked = on;
+    syncHeaders();
+    render();
+}
+
+// Кликабельна вся строка, а не только галочка
+menu.addEventListener("click", ev => {
+    const li = ev.target.closest("li[data-v]");
+    if (li) toggleOption(li);
+});
+menu.addEventListener("keydown", ev => {
+    const li = ev.target.closest("li[data-v]");
+    if (!li) return;
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleOption(li); }
+    else if (ev.key === "ArrowDown") { ev.preventDefault(); (li.nextElementSibling || li).focus(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); (li.previousElementSibling || li).focus(); }
+});
+
+filtersEl.addEventListener("click", ev => {
+    if (ev.target.closest("#f-reset")) { resetFilters(); syncHeaders(); render(); }
+});
+
+document.addEventListener("click", ev => {
+    if (menu.hidden) return;
+    const inside = ev.composedPath().some(n => n === menu || (n.matches && n.matches("th[data-f]")));
+    if (!inside) closeFilterMenus();
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !menu.hidden) closeFilterMenus(); });
+const closeIfOpen = () => { if (!menu.hidden) closeFilterMenus(); };
+window.addEventListener("scroll", closeIfOpen);
+window.addEventListener("resize", closeIfOpen);
+document.querySelector(".scroll").addEventListener("scroll", closeIfOpen);
+
+initHeaders();
+
+/* ---------- Полный комментарий при наведении ---------- */
+const pop = $("report");
+
+function showComment(btn) {
+    const e = items.find(x => String(x.id) === btn.dataset.id);
+    if (!e || !e.comment) return;
+    pop.innerHTML = `
+        <h3>Комментарий: ${esc(e.ckey)}</h3>
+        <div class="desc full">${esc(e.comment)}</div>
+        <div><span class="label">Рецензент:</span><span class="mention">@${esc(e.reviewer || "—")}</span></div>`;
+    pop.hidden = false;
+
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
+    let top = r.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    pop.style.top = top + "px";
+}
+const hideComment = () => { pop.hidden = true; };
+const cmtTrigger = ev => ev.target.closest(".cmt[data-id]");
+
+rows.addEventListener("mouseover", ev => { const b = cmtTrigger(ev); if (b) showComment(b); });
+rows.addEventListener("mouseout",  ev => { if (cmtTrigger(ev)) hideComment(); });
+rows.addEventListener("focusin",   ev => { const b = cmtTrigger(ev); if (b) showComment(b); });
+rows.addEventListener("focusout",  ev => { if (cmtTrigger(ev)) hideComment(); });
+
+/* ---------- Окно оценки ---------- */
+const dlg = $("rate");
+const rateBody = $("rate-body");
+const areaSel = $("rate-area");
+const saveBtn = $("rate-save");
+const rateErr = $("rate-err");
+let inputs = [];
+let current = null;
+
+// Поля критериев и список деятельности строятся из данных сервера
+function buildForm() {
+    rateBody.innerHTML = LABELS.map((l, n) => `
+        <tr><th>${esc(l)}</th><td><input type="number" min="0" max="${MAX_SCORES[n]}" step="0.5" inputmode="decimal" placeholder="0–${MAX_SCORES[n]}" aria-label="${esc(l)}"></td></tr>`
+    ).join("") + '<tr class="total"><th>Общая оценка</th><td><output id="rate-total">—</output></td></tr>';
+    inputs = [...rateBody.querySelectorAll("input")];
+    inputs.forEach(i => i.addEventListener("input", readInputs));
+    areaSel.innerHTML = '<option value="" disabled selected>Выберите…</option>' +
+        AREAS.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+}
+areaSel.addEventListener("change", () => readInputs());
+
+function readInputs() {
+    const v = inputs.map((i, n) => i.value === "" ? NaN : Math.min(MAX_SCORES[n], Math.max(0, Number(i.value))));
+    const ok = v.length > 0 && v.every(n => !isNaN(n));
+    const totalEl = $("rate-total");
+    if (totalEl) totalEl.textContent = ok ? `${total(v)} из ${MAX_TOTAL}` : "—";
+    saveBtn.disabled = !(ok && areaSel.value);     // нужны все оценки и основная деятельность
+    return ok ? v : null;
+}
+
+rows.addEventListener("click", ev => {
+    const b = ev.target.closest("[data-rate]");
+    if (!b) return;
+    hideComment();
+    current = items.find(x => String(x.id) === b.dataset.rate);
+    if (!current) return;
+    $("rate-sub").textContent = `Модератор ${current.ckey}`;
+    inputs.forEach((i, n) => { i.value = current.s ? current.s[n] : ""; });
+    areaSel.value = current.area || "";
+    $("rate-comment").value = current.comment || "";
+    rateErr.textContent = "";
+    readInputs();
+    dlg.showModal();
+    if (b.dataset.focus === "comment") $("rate-comment").focus();
+});
+
+$("rate-cancel").addEventListener("click", () => dlg.close());
+
+saveBtn.addEventListener("click", async () => {
+    const v = readInputs();
+    if (!v || !current || !areaSel.value) return;
+    saveBtn.disabled = true;
+    rateErr.textContent = "";
+    try {
+        await api("/api/mod/reviews", {
+            periodId,
+            moderatorId: current.id,
+            scores: v,
+            area: areaSel.value,
+            comment: $("rate-comment").value
+        });
+        dlg.close();
+        await load();
+    } catch (e) {
+        rateErr.textContent = e.message;
+    } finally {
+        readInputs();
+    }
+});
+
+/* ---------- Выбор свода ---------- */
+const pBtn = $("period-btn");
+const pList = $("period-list");
+const pLabel = $("period-label");
+const statusOf = p => p.closed ? "закрыт" : "активный";
+
+function renderPeriods() {
+    const p = periods.find(x => x.id === periodId);
+    pLabel.innerHTML = p ? `${esc(p.name)} <small>${statusOf(p)}</small>` : "Нет сводов";
+    pList.innerHTML = periods.map(x =>
+        `<li role="option" tabindex="-1" data-id="${x.id}" aria-selected="${x.id === periodId}">${esc(x.name)}<small>${statusOf(x)}</small></li>`
+    ).join("");
+}
+
+function togglePicker(open) {
+    pList.hidden = !open;
+    pBtn.setAttribute("aria-expanded", open);
+    if (open && pList.firstElementChild) (pList.querySelector('[aria-selected="true"]') || pList.firstElementChild).focus();
+}
+
+function choosePeriod(id) {
+    periodId = Number(id);
+    resetFilters();                  // в другом своде другие значения
+    hideComment();
+    renderPeriods();
+    load();
+    togglePicker(false);
+    pBtn.focus();
+}
+
+pBtn.addEventListener("click", () => { closeFilterMenus(); togglePicker(pList.hidden); });
+pList.addEventListener("click", ev => { const li = ev.target.closest("li"); if (li) choosePeriod(li.dataset.id); });
+pList.addEventListener("keydown", ev => {
+    const li = ev.target.closest("li");
+    if (!li) return;
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); choosePeriod(li.dataset.id); }
+    else if (ev.key === "ArrowDown") { ev.preventDefault(); (li.nextElementSibling || li).focus(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); (li.previousElementSibling || li).focus(); }
+    else if (ev.key === "Escape") { togglePicker(false); pBtn.focus(); }
+});
+document.addEventListener("click", ev => { if (!ev.target.closest(".picker")) togglePicker(false); });
+
+/* ---------- Старт ---------- */
+async function init() {
+    try {
+        periods = await api("/api/mod/periods");
+        if (!periods.length) { renderPeriods(); rows.innerHTML = emptyRow("Сводов пока нет"); return; }
+        // Сначала текущий по дате, потом любой открытый, потом самый новый
+        periodId = (periods.find(p => p.current) || periods.find(p => !p.closed) || periods[0]).id;
+        renderPeriods();
+        await load();
+    } catch (e) {
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Профиль</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <script src="header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Профиль</h1>
+
+        <section class="block">
+            <div class="p-head">
+                <div class="p-avatar" id="p-avatar" aria-hidden="true"></div>
+                <div>
+                    <p class="p-name" id="p-name">Загрузка…</p>
+                    <p class="p-meta" id="p-meta"></p>
+                    <div class="roles" id="p-roles"></div>
+                </div>
+                <a class="btn logout" href="/auth/logout">Выйти</a>
+            </div>
+        </section>
+
+        <section class="block">
+            <h2>Итоги проводящего</h2>
+            <div class="stats" id="p-stats"></div>
+        </section>
+
+        <section class="block" id="reviewer-block" hidden>
+            <h2>Итоги рецензента</h2>
+            <div class="stats" id="r-stats"></div>
+        </section>
+
+        <section class="block">
+            <h2>По сводам</h2>
+            <div class="scroll">
+                <table class="compact">
+                    <thead>
+                        <tr><th>Свод</th><th>Статус</th><th>Ивентов</th><th>Оценено</th><th class="c">Средняя оценка</th><th class="cm">Комментарий к своду</th></tr>
+                    </thead>
+                    <tbody id="p-periods"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div class="report" id="report" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let MAX_TOTAL = 30;                  // уточняется по ответу сервера
+let periods = [];
+
+const tone = t => t >= MAX_TOTAL * 0.8 ? "good" : t >= MAX_TOTAL * 0.5 ? "mid" : "bad";
+const scoreBadge = v => v === null
+    ? '<span class="score wait">—</span>'
+    : `<span class="score ${tone(v)}">${v}</span>`;
+const stat = (value, label) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`;
+
+const COMMENT_PREVIEW = 20;          // сколько символов комментария видно в таблице
+const preview = t => {
+    const one = t.replace(/\s+/g, " ");
+    return one.length > COMMENT_PREVIEW ? one.slice(0, COMMENT_PREVIEW).trimEnd() + "…" : one;
+};
+
+function fill(p) {
+    MAX_TOTAL = p.maxTotal;
+    periods = p.periods;
+
+    // Аватар из Discord, а если его нет - первая буква имени
+    const av = $("p-avatar");
+    if (p.avatar) {
+        const img = new Image();
+        img.alt = "";
+        img.referrerPolicy = "no-referrer";
+        img.src = p.avatar;
+        av.textContent = "";
+        av.append(img);
+    } else {
+        av.textContent = p.name.charAt(0).toUpperCase();
+    }
+
+    $("p-name").textContent = p.name;
+    $("p-meta").textContent = `ckey: ${p.ckey}, Discord ID: ${p.id}`;
+    $("p-roles").innerHTML = p.roles.length
+        ? p.roles.map(r => `<span class="chip role">${esc(r.label || r.name)}</span>`).join("")
+        : '<span class="chip">Без роли</span>';
+
+    const events = periods.reduce((s, x) => s + x.events, 0);
+    const rated = periods.reduce((s, x) => s + x.rated, 0);
+    $("p-stats").innerHTML =
+        stat(events, "Проведено ивентов") +
+        stat(rated, "Из них оценено") +
+        stat(p.overall === null ? "—" : p.overall, "Средняя оценка");
+
+    if (p.reviewer) {
+        $("reviewer-block").hidden = false;
+        $("r-stats").innerHTML =
+            stat(p.reviewer.given, "Выставлено оценок") +
+            stat(p.reviewer.avg === null ? "—" : p.reviewer.avg, "Средняя выставленная оценка") +
+            stat(p.reviewer.comments, "Оставлено комментариев");
+    }
+
+    $("p-periods").innerHTML = periods.length
+        ? periods.map(x => {
+            const cm = x.comment
+                ? `<button class="cmt" type="button" data-p="${x.id}">${esc(preview(x.comment))}</button>`
+                : '<span class="none">—</span>';
+            return `<tr>
+                <td>${esc(x.name)}</td>
+                <td><span class="chip">${x.closed ? "закрыт" : "активный"}</span></td>
+                <td>${x.events}</td>
+                <td>${x.rated}</td>
+                <td class="c">${scoreBadge(x.avg)}</td>
+                <td class="cm">${cm}</td>
+            </tr>`;
+        }).join("")
+        : '<tr><td colspan="6" class="none">Вы ещё не проводили ивентов</td></tr>';
+}
+
+/* ---------- Полный комментарий к своду при наведении ---------- */
+const pop = $("report");
+
+function showComment(btn) {
+    const x = periods.find(p => p.id == btn.dataset.p);
+    if (!x || !x.comment) return;
+    pop.innerHTML = `
+        <h3>Комментарий к своду ${esc(x.name)}</h3>
+        <div class="desc full">${esc(x.comment)}</div>
+        ${x.commentBy ? `<div><span class="label">Написал:</span><span class="mention">@${esc(x.commentBy)}</span></div>` : ""}`;
+    pop.hidden = false;
+
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    const left = Math.min(Math.max(8, r.left), innerWidth - w - 8);
+    let top = r.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+}
+
+const tbody = $("p-periods");
+const trigger = ev => ev.target.closest(".cmt");
+tbody.addEventListener("mouseover", ev => { const b = trigger(ev); if (b) showComment(b); });
+tbody.addEventListener("mouseout",  ev => { if (trigger(ev)) pop.hidden = true; });
+tbody.addEventListener("focusin",   ev => { const b = trigger(ev); if (b) showComment(b); });
+tbody.addEventListener("focusout",  ev => { if (trigger(ev)) pop.hidden = true; });
+
+/* ---------- Старт ---------- */
+fetch("/api/profile")
+    .then(r => {
+        if (r.status === 401) { location.href = "/login.html"; return null; }
+        return r.ok ? r.json() : Promise.reject();
+    })
+    .then(p => { if (p) fill(p); })
+    .catch(() => {
+        $("p-name").textContent = "Не удалось загрузить профиль";
+        $("p-periods").innerHTML = '<tr><td colspan="6" class="none">Ошибка загрузки данных</td></tr>';
+    });
+</script>
+</body>
+</html>

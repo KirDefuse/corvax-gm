@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Модерация</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="mod-style.css">
+</head>
+<body class="menu-page">
+    <main class="hub">
+        <h1>Оценка модерации</h1>
+        <p>Оценки работы отдела модерации.</p>
+
+        <nav class="menu">
+            <a class="btn" href="main.html" id="switch-link" hidden>Сменить отдел</a>
+            <a class="btn" href="profile-mod.html">Профиль</a>
+            <a class="btn" href="roles-mod.html" id="roles-link" hidden>Роли</a>
+            <a class="btn" href="table-mod.html" id="table-link" hidden>Общая таблица</a>
+            <a class="btn" href="summary-mod.html">Месячный свод</a>
+        </nav>
+    </main>
+<script>
+fetch("/api/me")
+    .then(r => (r.ok ? r.json() : null))
+    .then(me => {
+        if (!me) return;
+        document.getElementById("roles-link").hidden = !(me.mod && me.mod.canManageRoles);
+        document.getElementById("switch-link").hidden = !me.isGm;   // кнопка только тем, кто есть и в ГМ
+        document.getElementById("table-link").hidden = !(me.mod && me.mod.canViewTable);
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

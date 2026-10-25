@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Вход</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="menu-page">
+    <main class="hub">
+        <h1>Таблица оценки</h1>
+        <p>Войдите через Discord, чтобы продолжить.</p>
+        <p class="error" id="error" role="alert" hidden></p>
+
+        <nav class="menu">
+            <a class="btn" href="/auth/login">Войти через Discord</a>
+        </nav>
+    </main>
+
+<script>
+const messages = {
+    denied: "Вход отменён.",
+    not_registered: "Вашего Discord-аккаунта нет в списке. Обратитесь к администратору.",
+    failed: "Не удалось войти. Попробуйте ещё раз."
+};
+const code = new URLSearchParams(location.search).get("error");
+if (code) {
+    const el = document.getElementById("error");
+    el.textContent = messages[code] || messages.failed;
+    el.hidden = false;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Мои ивенты</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <script src="header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Мои ивенты</h1>
+
+        <section class="block">
+            <div class="picker">
+                <button class="btn picker-btn" id="period-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Выбрать свод">
+                    <span id="period-label"></span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <ul class="picker-list" id="period-list" role="listbox" aria-label="Своды" hidden></ul>
+            </div>
+
+            <div class="scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ивент</th><th>Размер</th><th>Дата</th><th>Сервер</th><th>Рецензент</th>
+                            <th class="c">Оценки по критериям</th><th class="c">Общая оценка</th><th class="cm">Комментарий</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div class="report" id="report" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let MAX_TOTAL = 30;                  // уточняется по ответу сервера
+let periods = [];
+let events = [];
+let periodId = null;
+
+const tone = t => t >= MAX_TOTAL * 0.8 ? "good" : t >= MAX_TOTAL * 0.5 ? "mid" : "bad";
+
+const COMMENT_PREVIEW = 20;          // сколько символов комментария видно в таблице
+const preview = t => {
+    const one = t.replace(/\s+/g, " ");
+    return one.length > COMMENT_PREVIEW ? one.slice(0, COMMENT_PREVIEW).trimEnd() + "…" : one;
+};
+
+const rows = $("rows");
+const emptyRow = text => `<tr><td colspan="8" class="none">${esc(text)}</td></tr>`;
+
+async function api(url) {
+    const res = await fetch(url);
+    if (res.status === 401) { location.href = "/login.html"; throw new Error("Нужно войти заново."); }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || "Ошибка сервера.");
+    return j;
+}
+
+function render() {
+    if (!events.length) { rows.innerHTML = emptyRow("В этом своде у вас нет ивентов"); return; }
+    rows.innerHTML = events.map(e => {
+        const t = e.s ? e.total : null;
+        const score = `<span class="score ${t === null ? "wait" : tone(t)}">${t === null ? "—" : t}</span>`;
+        const cm = e.comment
+            ? `<button class="cmt" type="button" data-id="${e.id}">${esc(preview(e.comment))}</button>`
+            : '<span class="none">—</span>';
+        return `<tr>
+            <td><button class="id" data-id="${e.id}">#${e.id}</button></td>
+            <td><span class="chip">${esc(e.size)}</span></td>
+            <td>${esc(e.date)}</td>
+            <td>${esc(e.server)}</td>
+            <td class="${e.reviewer ? "" : "none"}">${esc(e.reviewer || "—")}</td>
+            <td class="c">${e.s ? e.s.join(" / ") : '<span class="none">—</span>'}</td>
+            <td class="c">${score}</td>
+            <td class="cm">${cm}</td>
+        </tr>`;
+    }).join("");
+}
+
+async function loadEvents() {
+    unpin();
+    rows.innerHTML = emptyRow("Загрузка…");
+    try {
+        const j = await api(`/api/my-events?period=${periodId}`);
+        MAX_TOTAL = j.maxTotal;
+        events = j.events;
+        render();
+    } catch (e) {
+        events = [];
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+/* ---------- Выбор свода ---------- */
+const pBtn = $("period-btn");
+const pList = $("period-list");
+const pLabel = $("period-label");
+const statusOf = p => p.closed ? "закрыт" : "активный";
+
+function renderPeriods() {
+    const p = periods.find(x => x.id === periodId);
+    pLabel.innerHTML = p ? `${esc(p.name)} <small>${statusOf(p)}</small>` : "Нет сводов";
+    pList.innerHTML = periods.map(x =>
+        `<li role="option" tabindex="-1" data-id="${x.id}" aria-selected="${x.id === periodId}">${esc(x.name)}<small>${statusOf(x)}</small></li>`
+    ).join("");
+}
+
+function togglePicker(open) {
+    pList.hidden = !open;
+    pBtn.setAttribute("aria-expanded", open);
+    if (open && pList.firstElementChild) (pList.querySelector('[aria-selected="true"]') || pList.firstElementChild).focus();
+}
+
+function choosePeriod(id) {
+    periodId = Number(id);
+    renderPeriods();
+    loadEvents();
+    togglePicker(false);
+    pBtn.focus();
+}
+
+pBtn.addEventListener("click", () => togglePicker(pList.hidden));
+pList.addEventListener("click", ev => { const li = ev.target.closest("li"); if (li) choosePeriod(li.dataset.id); });
+pList.addEventListener("keydown", ev => {
+    const li = ev.target.closest("li");
+    if (!li) return;
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); choosePeriod(li.dataset.id); }
+    else if (ev.key === "ArrowDown") { ev.preventDefault(); (li.nextElementSibling || li).focus(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); (li.previousElementSibling || li).focus(); }
+    else if (ev.key === "Escape") { togglePicker(false); pBtn.focus(); }
+});
+document.addEventListener("click", ev => { if (!ev.target.closest(".picker")) togglePicker(false); });
+
+/* ---------- Отчёт ивента и комментарий при наведении ---------- */
+const pop = $("report");
+let pinnedId = null;                 // id ивента, отчёт которого закреплён кликом
+
+function unpin() {
+    pinnedId = null;
+    pop.classList.remove("pinned");
+    pop.style.pointerEvents = "";
+    pop.hidden = true;
+}
+
+function placePop(btn) {
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    const left = Math.min(Math.max(8, r.left), innerWidth - w - 8);
+    let top = r.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+}
+
+function showReport(btn) {
+    const e = events.find(x => x.id == btn.dataset.id);
+    if (!e) return;
+    const pinned = pinnedId !== null;
+    pop.classList.toggle("pinned", pinned);
+    pop.innerHTML = `
+        <h3>Отчёт ивента #${e.id}</h3>
+        <div class="fields">
+            <div class="field"><small>Сервер:</small><span>${esc(e.server)}</span></div>
+            <div class="field"><small>Размер:</small><span>${esc(e.size)}</span></div>
+            <div class="field"><small>Дата:</small><span>${esc(e.date)}</span></div>
+        </div>
+        <div><span class="label">Описание:</span><div class="desc">${esc(e.desc)}</div></div>
+        <div><span class="label">Проводящий:</span><span class="mention">@${esc(e.host)}</span></div>
+        <small class="hint">${pinned ? "Нажмите на номер ещё раз, чтобы закрыть" : "Нажмите на номер, чтобы закрепить отчёт"}</small>`;
+
+    // Закреплённый отчёт принимает мышь, и длинное описание в нём листается
+    pop.style.pointerEvents = pinned ? "auto" : "";
+    const desc = pop.querySelector(".desc");
+    desc.style.maxHeight = pinned ? "240px" : "";
+    desc.style.overflowY = pinned ? "auto" : "";
+    desc.style.overscrollBehavior = "contain";
+    placePop(btn);
+}
+
+function showComment(btn) {
+    const e = events.find(x => x.id == btn.dataset.id);
+    if (!e || !e.comment) return;
+    pop.innerHTML = `
+        <h3>Комментарий к ивенту #${e.id}</h3>
+        <div class="desc full">${esc(e.comment)}</div>
+        <div><span class="label">Рецензент:</span><span class="mention">@${esc(e.reviewer)}</span></div>`;
+    placePop(btn);
+}
+
+const hidePop = () => { pop.hidden = true; };
+const trigger = ev => ev.target.closest(".id, .cmt");
+const showPop = b => (b.classList.contains("cmt") ? showComment(b) : showReport(b));
+
+rows.addEventListener("mouseover", ev => { const b = trigger(ev); if (b && pinnedId === null) showPop(b); });
+rows.addEventListener("mouseout",  ev => { if (trigger(ev) && pinnedId === null) hidePop(); });
+rows.addEventListener("focusin",   ev => { const b = trigger(ev); if (b && pinnedId === null) showPop(b); });
+rows.addEventListener("focusout",  ev => { if (trigger(ev) && pinnedId === null) hidePop(); });
+
+// Клик по номеру закрепляет отчёт: он не исчезает, а описание можно листать
+rows.addEventListener("click", ev => {
+    const b = ev.target.closest(".id");
+    if (!b) return;
+    if (pinnedId === b.dataset.id) return unpin();
+    pinnedId = b.dataset.id;
+    showReport(b);
+});
+document.addEventListener("click", ev => { if (pinnedId !== null && !ev.target.closest("#report, .id")) unpin(); });
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && pinnedId !== null) unpin(); });
+
+
+/* ---------- Старт ---------- */
+async function init() {
+    try {
+        periods = await api("/api/periods");
+        if (!periods.length) { renderPeriods(); rows.innerHTML = emptyRow("Сводов пока нет"); return; }
+        periodId = (periods.find(p => p.current) || periods.find(p => !p.closed) || periods[0]).id;
+        renderPeriods();
+        await loadEvents();
+    } catch (e) {
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="steel">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Профиль модератора</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="mod-style.css">
+</head>
+<body>
+    <script src="mod-header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Профиль модератора</h1>
+
+        <section class="block">
+            <div class="p-head">
+                <div class="p-avatar" id="p-avatar" aria-hidden="true"></div>
+                <div>
+                    <p class="p-name" id="p-name">Загрузка…</p>
+                    <p class="p-meta" id="p-meta"></p>
+                    <div class="roles" id="p-roles"></div>
+                </div>
+                <a class="btn logout" href="/auth/logout">Выйти</a>
+            </div>
+        </section>
+
+        <section class="block">
+            <h2>Итоги модератора</h2>
+            <div class="stats" id="p-stats"></div>
+        </section>
+
+        <section class="block" id="reviewer-block" hidden>
+            <h2>Итоги рецензента</h2>
+            <div class="stats" id="r-stats"></div>
+        </section>
+
+        <section class="block">
+            <h2>Оценки по сводам</h2>
+            <div class="scroll">
+                <table class="compact">
+                    <thead>
+                        <tr>
+                            <th>Свод</th><th>Основная деятельность</th><th class="c">Оценки по критериям</th>
+                            <th class="c">Сумма</th><th>Рецензент</th><th class="cm">Комментарий</th>
+                        </tr>
+                    </thead>
+                    <tbody id="p-reviews"></tbody>
+                </table>
+            </div>
+            <p class="none" id="p-legend" style="margin:12px 4px 4px"></p>
+        </section>
+    </main>
+
+    <div class="report" id="report" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let MAX_TOTAL = 25;                  // уточняется по ответу сервера
+let reviews = [];
+
+const tone = t => t >= MAX_TOTAL * 0.8 ? "good" : t >= MAX_TOTAL * 0.5 ? "mid" : "bad";
+const scoreBadge = v => v === null
+    ? '<span class="score wait">—</span>'
+    : `<span class="score ${tone(v)}">${v}</span>`;
+// Плитка итогов; для длинного текста (название деятельности) шрифт меньше
+const stat = (value, label, small) =>
+    `<div class="stat"><b${small ? ' style="font-size:1.35rem;line-height:1.5"' : ""}>${esc(value)}</b><span>${esc(label)}</span></div>`;
+
+const COMMENT_PREVIEW = 20;          // сколько символов комментария видно в таблице
+const preview = t => {
+    const one = t.replace(/\s+/g, " ");
+    return one.length > COMMENT_PREVIEW ? one.slice(0, COMMENT_PREVIEW).trimEnd() + "…" : one;
+};
+
+function fill(p) {
+    MAX_TOTAL = p.maxTotal;
+    reviews = p.reviews;
+
+    // Аватар из Discord, а если его нет - первая буква имени
+    const av = $("p-avatar");
+    if (p.avatar) {
+        const img = new Image();
+        img.alt = "";
+        img.referrerPolicy = "no-referrer";
+        img.src = p.avatar;
+        av.textContent = "";
+        av.append(img);
+    } else {
+        av.textContent = p.name.charAt(0).toUpperCase();
+    }
+
+    $("p-name").textContent = p.name;
+    $("p-meta").textContent = `ckey: ${p.ckey || "—"}, Discord ID: ${p.id}`;
+    $("p-roles").innerHTML = p.roles.length
+        ? p.roles.map(r => `<span class="chip role">${esc(r.label || r.name)}</span>`).join("")
+        : '<span class="chip">Без роли</span>';
+
+    $("p-stats").innerHTML =
+        stat(reviews.length, "Получено оценок") +
+        stat(p.overall === null ? "—" : p.overall, `Средняя оценка из ${p.maxTotal}`) +
+        stat(p.topArea || "—", "Основная деятельность", true);
+
+    if (p.reviewer) {
+        $("reviewer-block").hidden = false;
+        $("r-stats").innerHTML =
+            stat(p.reviewer.given, "Выставлено оценок") +
+            stat(p.reviewer.avg === null ? "—" : p.reviewer.avg, "Средняя выставленная оценка") +
+            stat(p.reviewer.comments, "Оставлено комментариев");
+    }
+
+    $("p-reviews").innerHTML = reviews.length
+        ? reviews.map((x, i) => {
+            const crit = x.s ? x.s.map((v, k) => `${esc(p.labels[k])}: ${v}`).join(", ") : "";
+            const cm = x.comment
+                ? `<button class="cmt" type="button" data-i="${i}">${esc(preview(x.comment))}</button>`
+                : '<span class="none">—</span>';
+            return `<tr>
+                <td>${esc(x.period)} <span class="chip">${x.closed ? "закрыт" : "активный"}</span></td>
+                <td>${x.area ? `<span class="chip">${esc(x.area)}</span>` : '<span class="none">—</span>'}</td>
+                <td class="c" title="${crit}">${x.s ? x.s.join(" / ") : "—"}</td>
+                <td class="c">${scoreBadge(x.total)}</td>
+                <td class="${x.reviewer ? "" : "none"}">${esc(x.reviewer || "—")}</td>
+                <td class="cm">${cm}</td>
+            </tr>`;
+        }).join("")
+        : '<tr><td colspan="6" class="none">Вас пока не оценивали</td></tr>';
+
+    $("p-legend").textContent = "Порядок оценок: " + p.labels.map((l, i) => `${l} (до ${p.maxScores[i]})`).join(" / ");
+}
+
+/* ---------- Полный комментарий при наведении ---------- */
+const pop = $("report");
+
+function showComment(btn) {
+    const x = reviews[Number(btn.dataset.i)];
+    if (!x || !x.comment) return;
+    pop.innerHTML = `
+        <h3>Комментарий: ${esc(x.period)}</h3>
+        <div class="desc full">${esc(x.comment)}</div>
+        ${x.reviewer ? `<div><span class="label">Рецензент:</span><span class="mention">@${esc(x.reviewer)}</span></div>` : ""}`;
+    pop.hidden = false;
+
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
+    let top = r.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    pop.style.top = top + "px";
+}
+
+const tbody = $("p-reviews");
+const trigger = ev => ev.target.closest(".cmt");
+tbody.addEventListener("mouseover", ev => { const b = trigger(ev); if (b) showComment(b); });
+tbody.addEventListener("mouseout",  ev => { if (trigger(ev)) pop.hidden = true; });
+tbody.addEventListener("focusin",   ev => { const b = trigger(ev); if (b) showComment(b); });
+tbody.addEventListener("focusout",  ev => { if (trigger(ev)) pop.hidden = true; });
+
+/* ---------- Старт ---------- */
+fetch("/api/mod/profile")
+    .then(r => {
+        if (r.status === 401) { location.href = "/login.html"; return null; }
+        if (r.status === 403) throw new Error("Раздел доступен только сотрудникам модерации.");
+        return r.ok ? r.json() : Promise.reject(new Error("Не удалось загрузить профиль"));
+    })
+    .then(p => { if (p) fill(p); })
+    .catch(e => {
+        $("p-name").textContent = e.message;
+        $("p-reviews").innerHTML = '<tr><td colspan="6" class="none">Ошибка загрузки данных</td></tr>';
+    });
+</script>
+</body>
+</html>

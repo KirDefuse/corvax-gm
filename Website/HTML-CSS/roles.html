@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Роли</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <script src="header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Роли</h1>
+
+        <section class="block">
+            <h2>Выдать роль</h2>
+            <div class="grant">
+                <input class="field-input" id="g-id" type="text" inputmode="numeric" autocomplete="off" placeholder="Discord ID" aria-label="Discord ID">
+                <select class="field-input" id="g-role" aria-label="Роль"></select>
+                <button class="btn primary" id="g-btn" type="button">Выдать</button>
+            </div>
+            <p class="msg" id="msg" role="status"></p>
+        </section>
+
+        <section class="block">
+            <h2>Выданные роли</h2>
+            <div class="scroll">
+                <table class="compact">
+                    <thead><tr><th>Ckey</th><th>Discord ID</th><th>Роли</th></tr></thead>
+                    <tbody id="users"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function say(text, kind = "") {
+    $("msg").textContent = text;
+    $("msg").className = "msg " + kind;
+}
+
+async function api(url, body) {
+    const res = await fetch(url, body ? {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    } : undefined);
+    if (res.status === 401) { location.href = "/login.html"; throw new Error("Нужно войти заново."); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Ошибка сервера.");
+    return data;
+}
+
+function roleChip(u, r) {
+    const x = r.canRevoke
+        ? `<button class="chip-x" type="button" data-id="${esc(u.discordId)}" data-role="${esc(r.name)}" data-label="${esc(r.label)}" data-ckey="${esc(u.ckey)}" aria-label="Снять роль ${esc(r.label)}">×</button>`
+        : "";
+    return `<span class="chip role">${esc(r.label)}${x}</span>`;
+}
+
+async function load() {
+    const data = await api("/api/roles");
+
+    $("g-role").innerHTML = data.assignable.map(r => `<option value="${esc(r.name)}">${esc(r.label)}</option>`).join("");
+
+    $("users").innerHTML = data.users.length
+        ? data.users.map(u => `
+            <tr>
+                <td>${esc(u.ckey)}</td>
+                <td class="mono">${esc(u.discordId)}</td>
+                <td><div class="cell-roles">${u.roles.map(r => roleChip(u, r)).join("")}</div></td>
+            </tr>`).join("")
+        : '<tr><td colspan="3" class="none">Ролей пока никто не получил</td></tr>';
+}
+
+async function grant() {
+    const discordId = $("g-id").value.trim();
+    if (!discordId) return say("Введите Discord ID.", "err");
+    try {
+        const r = await api("/api/roles/grant", { discordId, role: $("g-role").value });
+        say(r.already ? `У ${r.ckey} уже есть роль «${r.label}».` : `Роль «${r.label}» выдана: ${r.ckey}.`, r.already ? "" : "ok");
+        $("g-id").value = "";
+        await load();
+    } catch (e) {
+        say(e.message, "err");
+    }
+}
+
+$("g-btn").addEventListener("click", grant);
+$("g-id").addEventListener("keydown", e => { if (e.key === "Enter") grant(); });
+
+$("users").addEventListener("click", async ev => {
+    const b = ev.target.closest(".chip-x");
+    if (!b) return;
+    if (!confirm(`Снять роль «${b.dataset.label}» у ${b.dataset.ckey}?`)) return;
+    try {
+        const r = await api("/api/roles/revoke", { discordId: b.dataset.id, role: b.dataset.role });
+        say(`Роль «${r.label}» снята у ${r.ckey}.`, "ok");
+        await load();
+    } catch (e) {
+        say(e.message, "err");
+    }
+});
+
+load().catch(e => say(e.message, "err"));
+</script>
+</body>
+</html>

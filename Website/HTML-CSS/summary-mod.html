@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Месячный свод модерации</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="mod-style.css">
+</head>
+<body>
+    <script src="mod-header.js"></script>
+
+    <main class="content">
+        <h1 class="sr-only">Месячный свод модерации</h1>
+
+        <section class="block">
+            <div class="toolbar">
+                <div class="picker">
+                    <button class="btn picker-btn" id="period-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Выбрать свод">
+                        <span id="period-label"></span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <ul class="picker-list" id="period-list" role="listbox" aria-label="Своды" hidden></ul>
+                </div>
+                <button class="btn toggle" id="only-me" type="button" aria-pressed="false">Только моя оценка</button>
+                <button class="btn toggle" id="by-month" type="button" aria-pressed="false" style="margin-left:auto">По месяцам</button>
+                <button class="btn toggle" id="save-img" type="button">Сохранить</button>
+            </div>
+
+            <div class="scroll">
+                <table class="compact">
+                    <thead>
+                        <tr><th>Модератор</th><th class="c">Средняя оценка</th><th>Основная деятельность</th><th class="cm">Комментарий</th></tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div class="report" id="report" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let MAX_TOTAL = 25;                  // уточняется по ответу сервера
+let periodsTotal = 1;                // сколько сводов входит в выбранный вид (1 или все своды месяца)
+let periods = [];
+let data = [];
+let periodId = null;
+let monthKey = null;                // выбранный месяц, например 2026-10
+let months = [];                    // месяцы, собранные из сводов
+let byMonth = false;                // включён ли месячный вид
+let onlyMe = new URLSearchParams(location.search).get("me") === "1";
+
+const tone = t => t >= MAX_TOTAL * 0.8 ? "good" : t >= MAX_TOTAL * 0.5 ? "mid" : "bad";
+
+const COMMENT_PREVIEW = 8;           // сколько символов комментария видно в таблице
+const preview = t => {
+    const one = t.replace(/\s+/g, " ");
+    return one.length > COMMENT_PREVIEW ? one.slice(0, COMMENT_PREVIEW).trimEnd() + "…" : one;
+};
+
+const rows = $("rows");
+const emptyRow = text => `<tr><td colspan="4" class="none">${esc(text)}</td></tr>`;
+
+async function api(url) {
+    const res = await fetch(url);
+    if (res.status === 401) { location.href = "/login.html"; throw new Error("Нужно войти заново."); }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || "Ошибка сервера.");
+    return j;
+}
+
+function render() {
+    const list = onlyMe ? data.filter(r => r.isMe) : data;
+    if (!list.length) {
+        rows.innerHTML = emptyRow(onlyMe ? "Вас нет в списке модераторов" : "Модераторов пока нет");
+        return;
+    }
+    rows.innerHTML = list.map(r => {
+        const score = r.avg === null
+            ? '<span class="score wait" title="Оценок за выбранный период пока нет">—</span>'
+            : `<span class="score ${tone(r.avg)}" title="Оценено сводов: ${r.rated} из ${periodsTotal}">${r.avg}</span>`;
+        const area = r.areas.length
+            ? `<div class="cell-roles">${r.areas.map(a => `<span class="chip">${esc(a)}</span>`).join("")}</div>`
+            : '<span class="none">—</span>';
+        const cm = r.comment
+            ? `<button class="cmt" type="button" data-host="${esc(r.hostId)}">${esc(preview(r.comment))}</button>`
+            : '<span class="none">—</span>';
+
+        return `<tr class="${r.isMe ? "me" : ""}">
+            <td>${esc(r.host)}</td>
+            <td class="c">${score}</td>
+            <td>${area}</td>
+            <td class="cm">${cm}</td>
+        </tr>`;
+    }).join("");
+}
+
+async function loadSummary() {
+    rows.innerHTML = emptyRow("Загрузка…");
+    try {
+        const q = byMonth ? `month=${monthKey}` : `period=${periodId}`;
+        const j = await api(`/api/mod/summary?${q}`);
+        MAX_TOTAL = j.maxTotal;
+        periodsTotal = j.periodsTotal;
+        data = j.rows;
+        render();
+    } catch (e) {
+        data = [];
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+/* ---------- Переключатель «только моя оценка» ---------- */
+const meBtn = $("only-me");
+const syncToggle = () => meBtn.setAttribute("aria-pressed", onlyMe);
+meBtn.addEventListener("click", () => { onlyMe = !onlyMe; syncToggle(); render(); });
+
+/* ---------- Переключатель «по месяцам» ---------- */
+const monthBtn = $("by-month");
+monthBtn.addEventListener("click", () => {
+    byMonth = !byMonth;
+    monthBtn.setAttribute("aria-pressed", byMonth);
+    if (byMonth) {
+        // Открываем месяц, в который входит выбранный свод
+        const cur = periods.find(p => p.id === periodId);
+        monthKey = cur ? (cur.month || `p${cur.id}`) : (months[0] && months[0].key);
+    }
+    renderPeriods();
+    loadSummary();
+});
+
+/* ---------- Выбор свода ---------- */
+const pBtn = $("period-btn");
+const pList = $("period-list");
+const pLabel = $("period-label");
+const statusOf = p => p.closed ? "закрыт" : "активный";
+
+// Месяцы собираем из сводов: April1 и April2 превращаются в April
+function buildMonths() {
+    const groups = new Map();
+    for (const p of periods) {
+        const key = p.month || `p${p.id}`;
+        if (!groups.has(key)) groups.set(key, { key, label: p.name.replace(/\s*\d+$/, ""), closed: true });
+        const g = groups.get(key);
+        g.closed = g.closed && p.closed;
+    }
+    months = [...groups.values()];
+    // Одинаковые названия из разных лет различаем годом
+    for (const g of months) {
+        if (/^\d{4}-/.test(g.key) && months.filter(m => m.label === g.label).length > 1) g.label += " " + g.key.slice(0, 4);
+    }
+}
+
+// Что сейчас предлагает выбор: своды или месяцы
+const choices = () => byMonth
+    ? months
+    : periods.map(p => ({ key: p.id, label: p.name, closed: p.closed }));
+const selectedKey = () => byMonth ? monthKey : periodId;
+
+function renderPeriods() {
+    const list = choices();
+    const cur = list.find(x => x.key === selectedKey());
+    pLabel.innerHTML = cur ? `${esc(cur.label)} <small>${statusOf(cur)}</small>` : "Нет сводов";
+    pList.innerHTML = list.map(x =>
+        `<li role="option" tabindex="-1" data-key="${esc(x.key)}" aria-selected="${x.key === selectedKey()}">${esc(x.label)}<small>${statusOf(x)}</small></li>`
+    ).join("");
+}
+
+function togglePicker(open) {
+    pList.hidden = !open;
+    pBtn.setAttribute("aria-expanded", open);
+    if (open && pList.firstElementChild) (pList.querySelector('[aria-selected="true"]') || pList.firstElementChild).focus();
+}
+
+function choosePeriod(key) {
+    if (byMonth) monthKey = key; else periodId = Number(key);
+    renderPeriods();
+    loadSummary();
+    togglePicker(false);
+    pBtn.focus();
+}
+
+pBtn.addEventListener("click", () => togglePicker(pList.hidden));
+pList.addEventListener("click", ev => { const li = ev.target.closest("li"); if (li) choosePeriod(li.dataset.key); });
+pList.addEventListener("keydown", ev => {
+    const li = ev.target.closest("li");
+    if (!li) return;
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); choosePeriod(li.dataset.key); }
+    else if (ev.key === "ArrowDown") { ev.preventDefault(); (li.nextElementSibling || li).focus(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); (li.previousElementSibling || li).focus(); }
+    else if (ev.key === "Escape") { togglePicker(false); pBtn.focus(); }
+});
+document.addEventListener("click", ev => { if (!ev.target.closest(".picker")) togglePicker(false); });
+
+/* ---------- Полный комментарий при наведении ---------- */
+const pop = $("report");
+
+function showComment(btn) {
+    const r = data.find(x => x.hostId === btn.dataset.host);
+    if (!r || !r.comment) return;
+    pop.innerHTML = `
+        <h3>Комментарий: ${esc(r.host)}</h3>
+        <div class="desc full">${esc(r.comment)}</div>
+        ${r.commentBy ? `<div><span class="label">Написал:</span><span class="mention">@${esc(r.commentBy)}</span></div>` : ""}`;
+    pop.hidden = false;
+
+    const b = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    const left = Math.min(Math.max(8, b.left), innerWidth - w - 8);
+    let top = b.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, b.top - h - 8);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+}
+
+const hideComment = () => { pop.hidden = true; };
+const trigger = ev => ev.target.closest(".cmt[data-host]");
+
+rows.addEventListener("mouseover", ev => { const b = trigger(ev); if (b) showComment(b); });
+rows.addEventListener("mouseout",  ev => { if (trigger(ev)) hideComment(); });
+rows.addEventListener("focusin",   ev => { const b = trigger(ev); if (b) showComment(b); });
+rows.addEventListener("focusout",  ev => { if (trigger(ev)) hideComment(); });
+
+/* ---------- Сохранение всего свода одной картинкой ---------- */
+// Таблица рисуется заново на холсте, поэтому картинка всегда целиком и чёткая, независимо от размера окна
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+}
+
+function wrapText(ctx, text, maxW) {
+    const lines = [];
+    for (const para of String(text).split("\n")) {
+        let line = "";
+        for (const word of para.split(" ")) {
+            const test = line ? line + " " + word : word;
+            if (ctx.measureText(test).width <= maxW) { line = test; continue; }
+            if (line) lines.push(line);
+            let chunk = "";                       // слишком длинное слово режем по символам
+            for (const ch of word) {
+                if (ctx.measureText(chunk + ch).width > maxW) { lines.push(chunk); chunk = ch; } else chunk += ch;
+            }
+            line = chunk;
+        }
+        lines.push(line);
+    }
+    return lines;
+}
+
+async function saveImage() {
+    if (!data.length) return;
+    const btn = $("save-img");
+    btn.disabled = true;
+    try {
+        await Promise.all([
+            document.fonts.load("600 20px Onest", "Модератор"),
+            document.fonts.load("700 28px Unbounded", "Свод")
+        ]);
+
+        const css = getComputedStyle(document.documentElement);
+        const v = n => css.getPropertyValue(n).trim();
+        const BODY = "Onest, 'Segoe UI', sans-serif";
+        const DISPLAY = "Unbounded, 'Segoe UI', sans-serif";
+        const TINT = { good: "rgba(110,231,183,.16)", mid: "rgba(251,191,36,.16)", bad: "rgba(251,113,133,.16)" };
+
+        const cur = choices().find(x => x.key === selectedKey());
+        const label = cur ? cur.label : "";
+        const W = 1100, PAD = 40, LINE = 24;
+        const SCORE_X = PAD + 250, AREA_X = PAD + 330, AREA_W = 150, CM_X = PAD + 510, CM_W = W - PAD - 24 - CM_X;
+
+        // Сначала считаем высоту строк: комментарии и деятельность переносятся по словам
+        const m = document.createElement("canvas").getContext("2d");
+        const items = data.map(r => {
+            m.font = `500 17px ${BODY}`;
+            const cl = r.comment ? wrapText(m, r.comment, CM_W) : [];
+            m.font = `500 15px ${BODY}`;
+            const al = r.areas.length ? wrapText(m, r.areas.join(", "), AREA_W) : [];
+            return { r, cl, al, h: Math.max(64, Math.max(cl.length, al.length) * LINE + 32) };
+        });
+        const H = 164 + items.reduce((s, it) => s + it.h + 10, 0) + 40;
+        const scale = Math.max(1, Math.min(2, Math.sqrt(16000000 / (W * H))));   // для очень длинных списков чуть меньше
+
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(W * scale);
+        cv.height = Math.round(H * scale);
+        const ctx = cv.getContext("2d");
+        ctx.scale(scale, scale);
+
+        ctx.fillStyle = v("--bg");
+        ctx.fillRect(0, 0, W, H);
+        roundRect(ctx, 16, 16, W - 32, H - 32, 28);
+        ctx.fillStyle = v("--panel");
+        ctx.fill();
+        ctx.strokeStyle = v("--line");
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = v("--text");
+        ctx.font = `700 28px ${DISPLAY}`;
+        ctx.fillText(`${byMonth ? "Месячный свод" : "Свод"} модерации: ${label}`, PAD, 76);
+
+        ctx.fillStyle = v("--muted");
+        ctx.font = `500 15px ${BODY}`;
+        ctx.fillText(`Оценка считается суммой критериев, максимум ${MAX_TOTAL}. Сформировано ${new Date().toLocaleDateString("ru-RU")}`, PAD, 104);
+        ctx.fillText("Модератор", PAD + 24, 148);
+        ctx.fillText("Основная деятельность", AREA_X, 148);
+        ctx.fillText("Комментарий", CM_X, 148);
+        ctx.textAlign = "center";
+        ctx.fillText("Средняя оценка", SCORE_X, 148);
+
+        let y = 164;
+        for (const { r, cl, al, h } of items) {
+            roundRect(ctx, PAD, y, W - 2 * PAD, h, 16);
+            ctx.fillStyle = v("--row");
+            ctx.fill();
+
+            if (r.isMe) {
+                ctx.fillStyle = v("--accent");
+                ctx.fillRect(PAD, y + 12, 4, h - 24);
+            }
+
+            ctx.textAlign = "left";
+            ctx.fillStyle = v("--text");
+            ctx.font = `600 18px ${BODY}`;
+            ctx.fillText(r.host, PAD + 24, y + h / 2 + 6);
+
+            // Бейдж оценки
+            const bx = SCORE_X - 34, by = y + h / 2 - 18;
+            roundRect(ctx, bx, by, 68, 36, 12);
+            ctx.textAlign = "center";
+            ctx.font = `600 15px ${DISPLAY}`;
+            if (r.avg === null) {
+                ctx.setLineDash([4, 3]);
+                ctx.strokeStyle = v("--chip");
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = v("--muted");
+                ctx.fillText("—", SCORE_X, by + 24);
+            } else {
+                const t = tone(r.avg);
+                ctx.fillStyle = TINT[t];
+                ctx.fill();
+                ctx.fillStyle = v(`--${t}`);
+                ctx.fillText(String(r.avg), SCORE_X, by + 24);
+            }
+
+            // Основная деятельность
+            ctx.textAlign = "left";
+            ctx.font = `500 15px ${BODY}`;
+            if (al.length) {
+                ctx.fillStyle = v("--text");
+                const top = y + (h - al.length * LINE) / 2 + 17;
+                al.forEach((ln, i) => ctx.fillText(ln, AREA_X, top + i * LINE));
+            } else {
+                ctx.fillStyle = v("--muted");
+                ctx.fillText("—", AREA_X, y + h / 2 + 6);
+            }
+
+            // Комментарий целиком
+            ctx.font = `500 17px ${BODY}`;
+            if (cl.length) {
+                ctx.fillStyle = v("--text");
+                const top = y + (h - cl.length * LINE) / 2 + 17;
+                cl.forEach((ln, i) => ctx.fillText(ln, CM_X, top + i * LINE));
+            } else {
+                ctx.fillStyle = v("--muted");
+                ctx.fillText("—", CM_X, y + h / 2 + 6);
+            }
+
+            y += h + 10;
+        }
+
+        cv.toBlob(blob => {
+            if (!blob) return;
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `svod-moderation-${label}`.replace(/[^\p{L}\p{N}_-]+/gu, "_") + ".png";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        }, "image/png");
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+$("save-img").addEventListener("click", saveImage);
+
+/* ---------- Старт ---------- */
+async function init() {
+    syncToggle();
+    try {
+        periods = await api("/api/mod/periods");
+        buildMonths();
+        if (!periods.length) { renderPeriods(); rows.innerHTML = emptyRow("Сводов пока нет"); return; }
+        periodId = (periods.find(p => p.current) || periods.find(p => !p.closed) || periods[0]).id;
+        renderPeriods();
+        await loadSummary();
+    } catch (e) {
+        rows.innerHTML = emptyRow(e.message);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

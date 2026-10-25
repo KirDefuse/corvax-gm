@@ -1,0 +1,285 @@
+/* Тема модерации: серо-синий, фирменный цвет #1941b6. Только стили, которые нужны странице mod-roles.html и шапке. */
+
+:root {
+    --brand: #213c8b;          /* основной цвет: заливки (кнопка «Выдать») */
+    --brand-hover: #2a54cc;
+    --bg: #0d1018;
+    --panel: #151927;
+    --row: #1c2235;
+    --row-hover: #262d46;
+    --chip: #303a59;
+    --line: #29314a;
+    --text: #e8ebf3;
+    --muted: #929bb5;
+    --accent: #7793e4;         /* светлый оттенок брендового цвета: текст и рамки */
+    --topbar: rgba(21, 25, 39, .9);
+    --good: #6ee7b7;
+    --mid: #fbbf24;
+    --bad: #fb7185;
+    --display: "Unbounded", "Segoe UI", sans-serif;
+    --body: "Onest", "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 400 1rem/1.5 var(--body);
+}
+
+a { color: inherit; text-decoration: none; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- Кнопка ---------- */
+.btn {
+    display: block;
+    padding: 14px 22px;
+    text-align: center;
+    background: var(--row);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    color: var(--text);
+    font: 600 1rem var(--display);
+    transition: border-color .2s, background .2s;
+}
+.btn:hover { background: var(--row-hover); border-color: var(--accent); }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn.primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn[hidden] { display: none; }
+
+/* ---------- Шапка (mod-header.js) ---------- */
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--line);
+    background: var(--topbar);
+    backdrop-filter: blur(8px);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.left { display: flex; align-items: center; gap: 14px; }
+
+.logo {
+    width: 56px;
+    height: 56px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--line);
+    border-radius: 16px;
+    color: var(--muted);
+}
+.logo svg { width: 45px; height: 45px; }
+
+.user { min-width: 140px; padding: 8px 22px; line-height: 1.3; }
+.user b { display: block; font: 600 1rem var(--display); }
+.user small { display: block; margin-top: 2px; color: var(--accent); font-weight: 500; }
+
+/* ---------- Контент и блоки ---------- */
+.content { padding: 28px 32px 48px; max-width: 1280px; margin: 0 auto; }
+
+.block {
+    padding: 22px 22px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+}
+.content > .block + .block { margin-top: 20px; }
+.block h2 { margin: 0 0 16px; font: 600 1.1rem var(--display); }
+
+/* ---------- Выдача роли ---------- */
+.grant { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.field-input {
+    padding: 12px 16px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    color: var(--text);
+    font: 500 1rem var(--body);
+    color-scheme: dark;
+}
+.field-input:focus-visible { outline: 2px solid var(--accent); }
+#g-id { flex: 1 1 240px; }
+.grant .btn { display: inline-block; padding: 12px 26px; }
+
+.msg { min-height: 1.5em; margin: 12px 0 0; color: var(--muted); }
+.msg.ok { color: var(--good); }
+.msg.err { color: var(--bad); }
+
+/* ---------- Таблица ---------- */
+.scroll { overflow-x: auto; }
+
+table { width: 100%; min-width: 880px; border-collapse: separate; border-spacing: 0 8px; }
+table.compact { min-width: 520px; }
+
+th { padding: 0 16px 4px; text-align: left; color: var(--muted); font-weight: 500; font-size: .9rem; }
+th:last-child, td:last-child { text-align: center; }
+
+td { padding: 14px 16px; background: var(--row); }
+td:first-child { border-radius: 16px 0 0 16px; font-weight: 600; }
+td:last-child { border-radius: 0 16px 16px 0; }
+tbody tr:hover td { background: var(--row-hover); }
+
+.none { color: var(--muted); }
+.mono { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- Роли (чипы) ---------- */
+.cell-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--chip); font-size: .85rem; }
+.chip.role { background: transparent; border: 1px solid var(--accent); color: var(--accent); font-weight: 600; }
+
+.chip-x { margin-left: 8px; padding: 0 2px; background: none; border: 0; color: inherit; font-size: 1.05rem; line-height: 1; cursor: pointer; }
+.chip-x:hover { color: var(--bad); }
+
+/* ---------- Адаптив и анимации ---------- */
+@media (max-width: 640px) {
+    .topbar, .content { padding-left: 14px; padding-right: 14px; }
+    .block { padding: 14px 12px 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+
+/* ---------- Главная страница модерации (main_mod.html) ---------- */
+.menu-page {
+    display: grid;
+    place-items: center;
+    padding: 32px 20px;
+    /* цвет градиента - это --brand в rgba, при смене --brand поправьте и здесь */
+    background:
+        linear-gradient(to top right, rgba(33, 60, 139, .38) 0%, rgba(33, 60, 139, .10) 35%, transparent 62%),
+        var(--bg);
+}
+
+.hub { width: min(520px, 100%); text-align: center; }
+.hub h1 { margin: 0 0 10px; font: 700 clamp(1.8rem, 5vw, 2.8rem)/1.1 var(--display); letter-spacing: -.02em; }
+.hub p { margin: 0 auto 32px; color: var(--muted); max-width: 40ch; }
+
+.menu {
+    display: grid;
+    gap: 12px;
+    width: min(340px, 100%);
+    margin: 0 auto;
+    padding: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+}
+.menu .btn { padding: 16px; font-size: 1.05rem; }
+
+/* ---------- Таблица оценки модерации (mod-table.html) ---------- */
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+.toggle { padding: 10px 16px; font-size: .95rem; cursor: pointer; }
+
+th.c, td.c { text-align: center; }
+th.cm, td.cm { text-align: left; }
+#rows .chip { padding: 5px 15px; font-size: 1rem; }
+
+/* Оценка */
+.score { display: inline-grid; place-items: center; min-width: 52px; height: 36px; padding: 0 10px; border-radius: 12px; font: 600 .8rem var(--display); }
+.score.good { background: rgba(110, 231, 183, .16); color: var(--good); }
+.score.mid  { background: rgba(251, 191, 36, .16);  color: var(--mid); }
+.score.bad  { background: rgba(251, 113, 133, .16); color: var(--bad); }
+.score.wait { background: transparent; border: 1px dashed var(--chip); color: var(--muted); }
+button.score { border: 0; font-family: var(--display); cursor: pointer; }
+button.score:hover { outline: 2px solid var(--accent); }
+
+/* Комментарий */
+.cmt { padding: 0; background: none; border: 0; color: var(--text); font: 500 .95rem var(--body); text-decoration: underline dotted; text-underline-offset: 4px; cursor: help; }
+.cmt[data-rate] { cursor: pointer; }
+.cmt[data-rate]:hover { color: var(--accent); }
+.cmt.add { color: var(--muted); text-decoration: none; border: 1px dashed var(--line); border-radius: 8px; padding: 2px 10px; font-size: .85rem; }
+
+/* Выпадающее меню фильтра */
+.picker-list {
+    position: absolute; z-index: 10; top: calc(100% + 6px); left: 0;
+    min-width: 100%; width: max-content; max-height: 260px; overflow-y: auto;
+    margin: 0; padding: 6px; list-style: none;
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
+.picker-list[hidden] { display: none; }
+.picker-list li { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 10px 14px; border-radius: 10px; font-weight: 500; cursor: pointer; }
+.picker-list li:hover, .picker-list li:focus-visible { background: var(--row-hover); outline: none; }
+.picker-list small { color: var(--accent); font: 500 .85rem var(--body); }
+
+/* Всплывающий комментарий */
+.report {
+    position: fixed; z-index: 20; display: grid; gap: 12px;
+    width: 340px; max-width: calc(100vw - 16px); padding: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+    font-size: .9rem; pointer-events: none;
+}
+.report[hidden] { display: none; }
+.report h3 { margin: 0; font: 600 1rem var(--display); }
+.report .label { display: block; margin-bottom: 4px; color: var(--muted); font-weight: 600; font-size: .8rem; }
+.report .desc { display: block; max-height: 130px; overflow: hidden; padding: 7px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; line-height: 1.45; white-space: pre-wrap; }
+.report .desc.full { max-height: none; }
+.mention { color: var(--accent); font-weight: 600; }
+
+/* Окно оценки */
+.modal { width: min(420px, calc(100vw - 24px)); padding: 22px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 22px; }
+.modal::backdrop { background: rgba(5, 8, 16, .7); }
+.modal h2 { margin: 0 0 4px; font: 600 1.15rem var(--display); }
+.modal p { margin: 0 0 14px; color: var(--muted); font-size: .9rem; }
+.modal textarea, .modal select { width: 100%; margin-top: 6px; }
+.modal textarea { resize: vertical; }
+.cm-label { display: block; margin: 12px 0 0; color: var(--muted); font-size: .9rem; }
+
+.mini { min-width: 0; width: 100%; border-spacing: 0 6px; }
+.mini th { padding: 12px 16px; background: var(--row); border-radius: 14px 0 0 14px; color: var(--text); font-size: 1rem; text-align: left; }
+.mini td { padding: 6px 10px; background: var(--row); border-radius: 0 14px 14px 0; text-align: center; }
+.mini input { width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--text); font: 600 1rem var(--body); text-align: center; }
+.mini input:focus-visible { outline: 2px solid var(--accent); }
+.mini .total th, .mini .total td { background: var(--chip); font-weight: 700; }
+.mini output { font: 700 1.15rem var(--display); }
+
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.actions .btn { padding: 10px 20px; font-size: .95rem; }
+
+/* ---------- Выбор свода ---------- */
+.picker { position: relative; display: inline-block; margin-bottom: 14px; }
+.toolbar .picker { margin-bottom: 0; }
+.picker-btn { display: flex; align-items: center; gap: 14px; padding: 10px 16px; font-size: .95rem; cursor: pointer; }
+.picker-btn small { color: var(--accent); font: 500 .85rem var(--body); }
+.picker-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
+.picker-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+.picker-btn[aria-expanded="true"] { border-color: var(--accent); }
+.picker-list li[aria-selected="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+.picker-list li[aria-selected="true"] small { color: inherit; opacity: .75; }
+
+/* ---------- Профиль модератора (mod-profile.html) ---------- */
+.p-head { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.p-head .logout { margin-left: auto; }
+
+.p-avatar { width: 96px; height: 96px; flex: none; display: grid; place-items: center; overflow: hidden; background: var(--row); border: 1px solid var(--line); border-radius: 24px; color: var(--accent); font: 700 2.4rem var(--display); }
+.p-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.p-name { margin: 0; font: 700 1.6rem/1.2 var(--display); }
+.p-meta { margin: 4px 0 12px; color: var(--muted); }
+.roles { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.stat { padding: 20px; background: var(--row); border-radius: 18px; }
+.stat b { display: block; font: 700 2rem/1.1 var(--display); }
+.stat span { color: var(--muted); font-size: .9rem; }
+
+@media (max-width: 640px) { .stats { grid-template-columns: 1fr; } }
+
+/* ---------- Месячный свод модерации (mod-summary.html) ---------- */
+.toggle[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
